@@ -87,8 +87,6 @@ if [ -f "${VENDOR_IMG}" ]; then
         chmod 0644 "${MNT_V}/etc/init/init.button.rc" 2>/dev/null || true
         echo "  -> Injected ColorOS 16 Power Button Wake Delay Fix into dipper vendor.img"
     fi
-    # Ensure fstab/overlay directories exist for ColorOS
-    mkdir -p "${MNT_V}/odm"
     sync
     umount "${MNT_V}"
     rmdir "${MNT_V}"
@@ -98,10 +96,11 @@ fi
 
 echo "[3/5] Building standalone EXT4 system.img for Xiaomi Mi 8 (sda25)..."
 USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
-IMG_MB=$(( USED_MB + 1024 ))
+IMG_MB=$(( USED_MB + 1500 ))
+NUM_INODES=$(( $(find "${SYS_ROOT}" | wc -l) + 25000 ))
 SYS_IMG="${BASE_DIR}/system.img"
 rm -f "${SYS_IMG}"
-mke2fs -t ext4 -b 4096 -L "/" -I 256 -d "${SYS_ROOT}" -O ^metadata_csum,^64bit,^has_journal "${SYS_IMG}" "${IMG_MB}M"
+mke2fs -t ext4 -b 4096 -L "/" -I 256 -N "${NUM_INODES}" -d "${SYS_ROOT}" -O ^metadata_csum,^64bit,^has_journal "${SYS_IMG}" "${IMG_MB}M"
 e2fsck -fy "${SYS_IMG}" || true
 resize2fs -M "${SYS_IMG}" || true
 rm -rf "${SYS_ROOT}"
@@ -211,8 +210,12 @@ chmod 0755 "${PKG_STAGE}/META-INF/com/google/android/update-binary"
 echo "# Dummy updater-script" > "${PKG_STAGE}/META-INF/com/google/android/updater-script"
 
 mv "${SYS_IMG}" "${PKG_STAGE}/system.img"
-[ -f "${VENDOR_IMG}" ] && mv "${VENDOR_IMG}" "${PKG_STAGE}/vendor.img"
-[ -f "${BASE_DIR}/boot.img" ] && mv "${BASE_DIR}/boot.img" "${PKG_STAGE}/boot.img"
+if [ -f "${VENDOR_IMG}" ]; then
+    mv "${VENDOR_IMG}" "${PKG_STAGE}/vendor.img"
+fi
+if [ -f "${BASE_DIR}/boot.img" ]; then
+    mv "${BASE_DIR}/boot.img" "${PKG_STAGE}/boot.img"
+fi
 
 echo "[5/5] Packaging Full Flashable TWRP ROM: ${OUT_ZIP}..."
 rm -f "${OUT_ZIP}"
