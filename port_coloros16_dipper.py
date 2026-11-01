@@ -312,20 +312,23 @@ def step3_apply_coolapk_pt_patches(sys_root: Path, device_market_name: str = "Xi
     # Keeps all useful daily apps: Calculator, Calendar, Weather, Notes, SoundRecorder, Compass, Music, ThemeStore, PhoneManager, OShare, ScreenRecorder
     log("14. Removing CN promotional bloatware & armv9 oat/ preopt files to fit inside 8.0 GiB sda25 partition...")
     debloat_rel_paths = [
-        # CN Shopping, Ads, Quick Games, Browser Video bloat in my_stock/del-app
+        # CN Shopping, Ads, Quick Games, Browser Video & NPU LLM bloat in my_stock/del-app
         "my_stock/del-app/BrowserVideo",
         "my_stock/del-app/FamilyGuard",
         "my_stock/del-app/FinShellWallet",
         "my_stock/del-app/Gamecenter",
         "my_stock/del-app/Health",
         "my_stock/del-app/KeKeUserCenterMember",
+        "my_stock/del-app/Melody",
         "my_stock/del-app/OPBreathMode",
         "my_stock/del-app/OPCommunity",
         "my_stock/del-app/OplusDocumentsReader",
         "my_stock/del-app/OplusEmail",
         "my_stock/del-app/OplusQuickGame",
         "my_stock/del-app/OPPOStore",
+        "my_stock/del-app/OppoTranslation",
         "my_stock/del-app/RiderMode",
+        "my_stock/del-app/Shortcuts",
         "my_stock/del-app/SoftsimRedteaRoaming",
         "my_stock/del-app/Tips",
         "my_stock/del-app/UPTsmService",
@@ -337,7 +340,11 @@ def step3_apply_coolapk_pt_patches(sys_root: Path, device_market_name: str = "Xi
         "my_preload/del-app",
         "my_company/del-app",
         "my_carrier/del-app",
-        # Unused CN Car / Wallet / Manual / Pictorial lockscreen ads in my_stock/app
+        # Unused CN Car / Wallet / Manual / Pictorial lockscreen ads & SD8Elite NPU LLM weights in my_stock/app
+        "my_stock/app/AIMemory",
+        "my_stock/app/AIUnit",
+        "my_stock/app/AIWidgets",
+        "my_stock/app/AIWriter",
         "my_stock/app/BeaconLink",
         "my_stock/app/Browser",
         "my_stock/app/CarLink",
@@ -347,31 +354,47 @@ def step3_apply_coolapk_pt_patches(sys_root: Path, device_market_name: str = "Xi
         "my_stock/app/Instant",
         "my_stock/app/InstantService",
         "my_stock/app/OplusOperationManual",
+        "my_stock/app/OplusSecurityKeyboard",
         "my_stock/app/OWork",
         "my_stock/app/Pictorial",
         "my_stock/app/RomUpdate",
+        "my_stock/app/SceneMode",
         "my_stock/app/SecurePay",
+        "my_stock/app/SecurityGuard",
         "my_stock/app/ShareScreen",
         "my_stock/app/ViewTalk",
         "my_stock/app/TasWallet",
         # Unused CN App Store, Breeno CN voice assistant, Car, Games in my_stock/priv-app
+        "my_stock/priv-app/BlackListApp",
         "my_stock/priv-app/DCS",
         "my_stock/priv-app/Cota",
+        "my_stock/priv-app/GlobalSearch",
         "my_stock/priv-app/HeyCast",
         "my_stock/priv-app/HeyTapSpeechAssist",
         "my_stock/priv-app/KeKeMarket",
         "my_stock/priv-app/LinktoWindows",
+        "my_stock/priv-app/Metis",
         "my_stock/priv-app/MyDevices",
         "my_stock/priv-app/OplusGames",
+        "my_stock/priv-app/SceneService",
+        "my_stock/priv-app/SOSHelper",
+        "my_stock/priv-app/UMS",
         "my_stock/priv-app/VideoGallery",
         "my_stock/priv-app/OCar",
-        # Donor-only hardware apps in my_product
+        # Donor-only hardware apps & camera tuning blobs in my_product
         "my_product/app/AONService",
         "my_product/app/OplusCamera",
         "my_product/app/talkback",
         "my_product/priv-app/RemoteControl",
-        # Unused legacy VNDK v33 apex (dipper LineageOS 22.2 vendor uses v35)
+        "my_product/vendor/etc/camera",
+        "my_product/non_overlay",
+        "my_stock/non_overlay",
+        # Unused legacy VNDK apexes (dipper LineageOS 22.2 vendor uses v35)
+        "system/system_ext/apex/com.android.vndk.v30.apex",
+        "system/system_ext/apex/com.android.vndk.v31.apex",
+        "system/system_ext/apex/com.android.vndk.v32.apex",
         "system/system_ext/apex/com.android.vndk.v33.apex",
+        "system/system_ext/apex/com.android.vndk.v34.apex",
     ]
     removed_dirs = 0
     for rel_p in debloat_rel_paths:

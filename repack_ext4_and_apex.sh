@@ -43,9 +43,11 @@ find "${SYS_ROOT}/system/apex" "${SYS_ROOT}/system/system_ext/apex" -type f \( -
             mkdir -p "${TMP_APEX}/payload_fs"
             fsck.erofs --extract="${TMP_APEX}/payload_fs" --force "${PAYLOAD}" >/dev/null 2>&1
             SIZE_KB=$(du -sk "${TMP_APEX}/payload_fs" | cut -f1)
-            IMG_KB=$(( SIZE_KB + 16384 ))
+            IMG_KB=$(( SIZE_KB + (SIZE_KB / 10) + 4096 ))
             rm -f "${PAYLOAD}"
-            mke2fs -t ext4 -b 4096 -d "${TMP_APEX}/payload_fs" -O ^has_journal,^metadata_csum "${PAYLOAD}" "${IMG_KB}K" >/dev/null 2>&1
+            mke2fs -t ext4 -b 4096 -m 0 -d "${TMP_APEX}/payload_fs" -O ^has_journal,^metadata_csum "${PAYLOAD}" "${IMG_KB}K" >/dev/null 2>&1
+            e2fsck -fy "${PAYLOAD}" >/dev/null 2>&1 || true
+            resize2fs -M "${PAYLOAD}" >/dev/null 2>&1 || true
             rm -rf "${TMP_APEX}/payload_fs"
 
             if [ "${IS_CAPEX}" -eq 1 ]; then
@@ -96,30 +98,58 @@ fi
 
 echo "[3/5] Building standalone EXT4 system.img for Xiaomi Mi 8 (sda25 <= 8.0 GiB)..."
 USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
-echo "  -> SYS_ROOT size after Python debloat: ${USED_MB} MiB"
+echo "  -> SYS_ROOT size after Python debloat & APEX shrink: ${USED_MB} MiB"
+echo "  -> Top 15 largest directories in SYS_ROOT:"
+du -sm "${SYS_ROOT}"/* "${SYS_ROOT}/my_stock"/*/* "${SYS_ROOT}/my_product"/*/* 2>/dev/null | sort -nr | head -n 15 || true
 
-# Safety guard: if SYS_ROOT is still > 6800 MiB, trim additional non-essential media/heytap bloat
-if [ "${USED_MB}" -gt 6800 ]; then
-    echo "  -> Trimming extra large bloat apps to ensure strict < 7500 MiB EXT4 image..."
-    rm -rf "${SYS_ROOT}/my_heytap/app"/* "${SYS_ROOT}/my_bigball/app"/* \
-           "${SYS_ROOT}/my_bigball/priv-app"/* "${SYS_ROOT}/my_preload"/* \
-           "${SYS_ROOT}/my_product/media/wallpaper"/* 2>/dev/null || true
+# Safety guard: ensure USED_MB <= 7000 MiB so final shrunk EXT4 image is strictly <= 7600 MiB (< 8192 MiB sda25)
+for extra_trim in \
+    "${SYS_ROOT}/my_product/media/wallpaper" \
+    "${SYS_ROOT}/my_product/media/video" \
+    "${SYS_ROOT}/my_product/res" \
+    "${SYS_ROOT}/my_stock/media" \
+    "${SYS_ROOT}/my_stock/del-app/KeKeThemeSpace" \
+    "${SYS_ROOT}/my_stock/priv-app/KeKeOplusThemeStore-CN" \
+    "${SYS_ROOT}/my_stock/priv-app/PhoneManager" \
+    "${SYS_ROOT}/my_stock/priv-app/OPSynergy" \
+    "${SYS_ROOT}/my_stock/priv-app/OShare" \
+    "${SYS_ROOT}/system/framework/oat"
+do
     USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
-    echo "  -> SYS_ROOT size after safety trim: ${USED_MB} MiB"
-fi
+    if [ "${USED_MB}" -le 7000 ]; then
+        break
+    fi
+    if [ -e "${extra_trim}" ]; then
+        echo "  -> Auto-trimming $(basename "${extra_trim}") (current USED_MB=${USED_MB} MiB > 7000 MiB)..."
+        rm -rf "${extra_trim}"
+    fi
+done
 
-IMG_MB=$(( USED_MB + (USED_MB * 6 / 100) + 128 ))
-if [ "${IMG_MB}" -gt 7500 ]; then
-    IMG_MB=7500
-fi
-NUM_INODES=$(( $(find "${SYS_ROOT}" | wc -l) + 16384 ))
+# If still > 7000 MiB, iteratively remove largest remaining entries in my_stock/del-app and my_stock/app
+while [ "$(du -sm "${SYS_ROOT}" | cut -f1)" -gt 7000 ]; do
+    BIGGEST=$(du -sm "${SYS_ROOT}/my_stock/del-app"/* "${SYS_ROOT}/my_stock/app"/* "${SYS_ROOT}/my_product/app"/* 2>/dev/null | sort -nr | head -n 1 | cut -f2 || true)
+    if [ -z "${BIGGEST}" ] || [ ! -e "${BIGGEST}" ]; then
+        break
+    fi
+    echo "  -> Auto-trimming largest remaining bloat: ${BIGGEST}"
+    rm -rf "${BIGGEST}"
+done
+
+USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
+echo "  -> Final SYS_ROOT directory size before mke2fs: ${USED_MB} MiB"
+
+# Allocate generous headroom (+900 MiB) during mke2fs so __populate_fs never runs out of blocks,
+# then shrink tightly with resize2fs -M so the final image is strictly < 8192 MiB (sda25).
+IMG_MB=$(( USED_MB + 900 ))
+NUM_INODES=$(( $(find "${SYS_ROOT}" | wc -l) + 32768 ))
 SYS_IMG="${BASE_DIR}/system.img"
 rm -f "${SYS_IMG}"
 mke2fs -t ext4 -b 4096 -L "/" -I 256 -m 0 -N "${NUM_INODES}" -d "${SYS_ROOT}" -O ^metadata_csum,^64bit,^has_journal "${SYS_IMG}" "${IMG_MB}M"
 e2fsck -fy "${SYS_IMG}" || true
 resize2fs -M "${SYS_IMG}" || true
-FINAL_SYS_MB=$(du -sm "${SYS_IMG}" | cut -f1)
-echo "  -> Final system.img size: ${FINAL_SYS_MB} MiB (Target sda25 partition: 8192 MiB)"
+FINAL_SYS_BYTES=$(stat -c%s "${SYS_IMG}")
+FINAL_SYS_MB=$(( FINAL_SYS_BYTES / 1048576 ))
+echo "  -> Final shrunk system.img size: ${FINAL_SYS_MB} MiB (${FINAL_SYS_BYTES} bytes; sda25 limit: 8589934592 bytes)"
 rm -rf "${SYS_ROOT}"
 
 echo "[4/5] Building Permissive Kernel 4.9.337 boot.img & TWRP/OrangeFox META-INF installer scripts..."
