@@ -1,22 +1,17 @@
-name: Build ColorOS 16 for Xiaomi Mi 8 (dipper)
+name: Build Standalone ColorOS 16 Full ROM for Xiaomi Mi 8 (dipper)
 
 on:
   workflow_dispatch:
     inputs:
       coloros16_ota_url:
-        description: "Direct URL to ColorOS 16 Full OTA .zip (or leave 'AUTO' to auto-fetch via OPlus OTA API)"
+        description: "Direct URL to ColorOS 16 Full OTA .zip (any OPlus/OPPO donor: OnePlus 12 / 13 / Ace 3 / Find X7 / X8)"
         required: true
-        default: "AUTO"
         type: string
-      donor_model:
-        description: "Donor Model (used when URL is 'AUTO': PKX110 = OnePlus 13T/Ace5, PJD110 = OnePlus 12, PJZ110 = OnePlus 13)"
+      dipper_base_rom_url:
+        description: "Direct URL to Xiaomi Mi 8 (dipper) Base ROM .zip (Leave 'AUTO_LINEAGE' to auto-fetch latest LineageOS 22.2 dipper)"
         required: false
-        default: "PKX110"
-        type: choice
-        options:
-          - PKX110
-          - PJD110
-          - PJZ110
+        default: "AUTO_LINEAGE"
+        type: string
       market_name:
         description: "Device Market Name shown in Settings"
         required: false
@@ -24,7 +19,7 @@ on:
         type: string
 
 jobs:
-  build-rom:
+  build-full-rom:
     runs-on: ubuntu-24.04
     steps:
       - name: Maximize Runner Disk Space (~120 GB Free)
@@ -35,52 +30,77 @@ jobs:
       - name: Checkout Dipper Builder Repository
         uses: actions/checkout@v4
 
-      - name: Install ROM Porting Dependencies
+      - name: Install ROM Porting & Android Image Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y erofs-utils e2fsprogs aria2 unzip zip xxd python3 python3-pip zstd curl jq
+          sudo apt-get install -y erofs-utils e2fsprogs aria2 unzip zip xxd python3 python3-pip zstd curl jq android-sdk-libsparse-utils mkbootimg
           wget -q https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
           tar -xzf payload-dumper-go_1.2.2_linux_amd64.tar.gz payload-dumper-go
           chmod +x payload-dumper-go
           sudo mv payload-dumper-go /usr/local/bin/
+          pip3 install --break-system-packages protobuf sdat2img || true
 
-      - name: Resolve & Download ColorOS 16 Full OTA
+      - name: Download & Extract Clean Xiaomi Mi 8 (dipper) Base ROM (boot.img + vendor.img)
         run: |
-          OTA_URL="${{ inputs.coloros16_ota_url }}"
-          if [ "${OTA_URL}" = "AUTO" ] || [ -z "${OTA_URL}" ]; then
-            echo "Auto-resolving latest CN ColorOS Full OTA for ${{ inputs.donor_model }}..."
-            pip3 install --break-system-packages realme-ota || true
-            git clone --depth=1 https://github.com/mhmdeve/oplus_ota_finder.git /tmp/ota_finder || true
-            if [ -f /tmp/ota_finder/requirements.txt ]; then
-              pip3 install --break-system-packages -r /tmp/ota_finder/requirements.txt || true
-            fi
-            echo "If AUTO resolution requires a specific build version, paste a direct URL from https://roms.danielspringer.at/ or https://github.com/spike0en/oneplus_archive/releases"
-          else
-            aria2c -x16 -s16 -k1M --user-agent="Dalvik/2.1.0 (Linux; U; Android 16; ${{ inputs.donor_model }} Build/AP3A.240617.008)" -o coloros16_ota.zip "${OTA_URL}"
+          mkdir -p ./base_dipper
+          BASE_URL="${{ inputs.dipper_base_rom_url }}"
+          if [ "${BASE_URL}" = "AUTO_LINEAGE" ] || [ -z "${BASE_URL}" ]; then
+            echo "Querying official LineageOS API for latest Xiaomi Mi 8 (dipper) build..."
+            BASE_URL=$(curl -s "https://download.lineageos.org/api/v2/devices/dipper/builds" | jq -r '.[0].files[] | select(.filename | endswith(".zip")) | .url' | head -n1)
+            echo "Resolved LineageOS dipper base URL: ${BASE_URL}"
           fi
+          aria2c -x16 -s16 -k1M -o dipper_base.zip "${BASE_URL}"
+          mkdir -p /tmp/dipper_base_unz
+          unzip -q dipper_base.zip -d /tmp/dipper_base_unz
+          rm -f dipper_base.zip
 
-      - name: Run ColorOS 16 -> Dipper Porting Engine (Clean, No NFC Module)
+          if [ -f /tmp/dipper_base_unz/payload.bin ]; then
+            payload-dumper-go -p boot,vendor -o ./base_dipper /tmp/dipper_base_unz/payload.bin
+          elif [ -f /tmp/dipper_base_unz/vendor.new.dat.br ]; then
+            brotli -d /tmp/dipper_base_unz/vendor.new.dat.br -o /tmp/dipper_base_unz/vendor.new.dat
+            git clone --depth=1 https://github.com/xpirt/sdat2img.git /tmp/sdat2img
+            python3 /tmp/sdat2img/sdat2img.py /tmp/dipper_base_unz/vendor.transfer.list /tmp/dipper_base_unz/vendor.new.dat ./base_dipper/vendor.img
+            cp -f /tmp/dipper_base_unz/boot.img ./base_dipper/boot.img
+          fi
+          rm -rf /tmp/dipper_base_unz
+
+          # Rebuild permissive Kernel 4.9.337 (KernelSU) boot.img for dipper if Image + ramdisk are present
+          if [ -f ./device_dipper/Image ] && [ -f ./device_dipper/ramdisk.cpio.gz ] && [ -f ./device_dipper/dipper_mp_v2_1.dtb ]; then
+            cat ./device_dipper/Image ./device_dipper/dipper_mp_v2_1.dtb > /tmp/Image-dtb
+            mkbootimg \
+              --kernel /tmp/Image-dtb \
+              --ramdisk ./device_dipper/ramdisk.cpio.gz \
+              --cmdline "console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xA84000 androidboot.hardware=qcom androidboot.console=ttyMSM0 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 androidboot.configfs=true loop.max_part=7 androidboot.usbcontroller=a600000.dwc3 androidboot.selinux=permissive" \
+              --base 0x00000000 \
+              --pagesize 4096 \
+              --os_version 15.0.0 \
+              --os_patch_level 2025-02 \
+              -o ./base_dipper/boot.img
+          fi
+          ls -lh ./base_dipper/
+
+      - name: Download ColorOS 16 Donor Full OTA
+        run: |
+          aria2c -x16 -s16 -k1M --user-agent="Dalvik/2.1.0 (Linux; U; Android 16; Build/AP3A.240617.008)" -o coloros16_ota.zip "${{ inputs.coloros16_ota_url }}"
+
+      - name: Run ColorOS 16 -> Dipper Porting Engine (Clean Standalone)
         run: |
           python3 port_coloros16_dipper.py \
             --ota coloros16_ota.zip \
             --work-dir ./work_c16_dipper
           rm -f coloros16_ota.zip
 
-      - name: Convert EROFS APEX to EXT4 & Build EXT4 system.img for Kernel 4.9.337
+      - name: Package Full Flashable TWRP Zip (boot.img + vendor.img + system.img)
         run: |
           sed -i 's/\r$//' repack_ext4_and_apex.sh
           chmod +x repack_ext4_and_apex.sh
-          sudo ./repack_ext4_and_apex.sh ./work_c16_dipper/system ./ColorOS16_dipper_system_ext4.img
-          sudo rm -rf ./work_c16_dipper
-          zstd -T0 -6 ./ColorOS16_dipper_system_ext4.img -o ./ColorOS16_dipper_system_ext4.img.zst
-          rm -f ./ColorOS16_dipper_system_ext4.img
-          ls -lh ./ColorOS16_dipper_system_ext4.img.zst
+          sudo ./repack_ext4_and_apex.sh ./work_c16_dipper ./base_dipper ./ColorOS16_Mi8_dipper_FULL.zip
+          sudo rm -rf ./work_c16_dipper ./base_dipper
+          ls -lh ./ColorOS16_Mi8_dipper_FULL.zip
 
-      - name: Upload Flashable ColorOS 16 Dipper System Image
+      - name: Upload Standalone Flashable ColorOS 16 ROM Zip
         uses: actions/upload-artifact@v4
         with:
-          name: ColorOS16-Xiaomi-Mi8-dipper-EXT4
-          path: |
-            ./ColorOS16_dipper_system_ext4.img.zst
-            ./device_dipper/*
+          name: ColorOS16-Xiaomi-Mi8-dipper-FULL-TWRP-ROM
+          path: ./ColorOS16_Mi8_dipper_FULL.zip
           retention-days: 7
