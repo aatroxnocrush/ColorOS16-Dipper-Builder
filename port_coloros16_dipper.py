@@ -280,6 +280,17 @@ def step4_dipper_kernel49_compatibility(
     """
     log("Applying Xiaomi Mi 8 (Kernel 4.9.337) APEX & BPF compatibility layer...")
 
+    # Automatically inject ColorOS 16 Wi-Fi Soft-Reboot BPF Fix (oplus-netd.o & ipv6_offload.o)
+    default_bpf_dir = Path(__file__).resolve().parent / "device_dipper" / "bpf_fix"
+    if default_bpf_dir.exists():
+        dst_bpf = sys_root / "system" / "etc" / "bpf"
+        dst_bpf.mkdir(parents=True, exist_ok=True)
+        for bpf_name in ("oplus-netd.o", "ipv6_offload.o"):
+            src_bpf = default_bpf_dir / bpf_name
+            if src_bpf.exists():
+                shutil.copy2(src_bpf, dst_bpf / bpf_name)
+                log(f"Injected ColorOS 16 Wi-Fi Soft-Reboot BPF fix: {bpf_name} -> /system/etc/bpf/{bpf_name}")
+
     # If user provides a working ColorOS 15 / LineageOS 22 system dump for dipper,
     # transplant EXT4 apexes, /system/etc/bpf, and liboplusbindermonitor.so
     if c15_donor_dir and c15_donor_dir.exists():
