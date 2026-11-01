@@ -13,9 +13,9 @@ set -euo pipefail
 #      into a single standalone flashable zip: ColorOS16_Mi8_dipper_FULL.zip
 # ==============================================================================
 
-WORK_DIR="${1:-./work_c16_dipper}"
-BASE_DIR="${2:-./base_dipper}"
-OUT_ZIP="${3:-./ColorOS16_Mi8_dipper_FULL.zip}"
+WORK_DIR="$(realpath -m "${1:-./work_c16_dipper}")"
+BASE_DIR="$(realpath -m "${2:-./base_dipper}")"
+OUT_ZIP="$(realpath -m "${3:-./ColorOS16_Mi8_dipper_FULL.zip}")"
 
 SYS_ROOT="${WORK_DIR}/system"
 DONOR_BLOBS="${WORK_DIR}/donor_blobs"
@@ -49,9 +49,11 @@ find "${SYS_ROOT}/system/apex" "${SYS_ROOT}/system/system_ext/apex" -type f \( -
             rm -rf "${TMP_APEX}/payload_fs"
 
             if [ "${IS_CAPEX}" -eq 1 ]; then
+                rm -f "${TMP_APEX}/original_apex"
                 (cd "${TMP_APEX}/inner" && zip -q -0 -r "${TMP_APEX}/original_apex" .)
                 rm -rf "${TMP_APEX}/inner"
             fi
+            rm -f "${apex_file}"
             (cd "${TMP_APEX}" && zip -q -0 -r "${apex_file}" .)
         fi
     fi
@@ -96,10 +98,10 @@ fi
 
 echo "[3/5] Building standalone EXT4 system.img for Xiaomi Mi 8 (sda25)..."
 USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
-IMG_MB=$(( USED_MB + 350 ))
+IMG_MB=$(( USED_MB + 1024 ))
 SYS_IMG="${BASE_DIR}/system.img"
 rm -f "${SYS_IMG}"
-mke2fs -t ext4 -b 4096 -L "/" -d "${SYS_ROOT}" -O ^metadata_csum,^64bit "${SYS_IMG}" "${IMG_MB}M"
+mke2fs -t ext4 -b 4096 -L "/" -I 256 -d "${SYS_ROOT}" -O ^metadata_csum,^64bit,^has_journal "${SYS_IMG}" "${IMG_MB}M"
 e2fsck -fy "${SYS_IMG}" || true
 resize2fs -M "${SYS_IMG}" || true
 rm -rf "${SYS_ROOT}"
@@ -213,7 +215,8 @@ mv "${SYS_IMG}" "${PKG_STAGE}/system.img"
 [ -f "${BASE_DIR}/boot.img" ] && mv "${BASE_DIR}/boot.img" "${PKG_STAGE}/boot.img"
 
 echo "[5/5] Packaging Full Flashable TWRP ROM: ${OUT_ZIP}..."
-(cd "${PKG_STAGE}" && zip -r -1 "${OLDPWD}/${OUT_ZIP}" .)
+rm -f "${OUT_ZIP}"
+(cd "${PKG_STAGE}" && zip -r -1 "${OUT_ZIP}" .)
 rm -rf "${PKG_STAGE}"
 
 echo "=== FULL STANDALONE ROM READY: ${OUT_ZIP} ==="
