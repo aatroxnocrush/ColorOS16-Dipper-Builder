@@ -172,17 +172,40 @@ def step3_apply_coolapk_pt_patches(sys_root: Path, device_market_name: str = "Xi
                 continue
             filtered.append(line)
 
+        # Strip any conflicting ro.product.first_api_level from my_*/build.prop before importing
+        for my_part in OPLUS_MY_PARTITIONS:
+            mp_prop = sys_root / my_part / "build.prop"
+            if mp_prop.exists():
+                mp_lines = mp_prop.read_text(encoding="utf-8", errors="ignore").splitlines()
+                mp_cleaned = [
+                    f"#{ln}" if ln.strip().startswith("ro.product.first_api_level=") else ln
+                    for ln in mp_lines
+                ]
+                mp_prop.write_text("\n".join(mp_cleaned) + "\n", encoding="utf-8")
+
         filtered.extend([
+            "",
+            "# === Import OPLUS Dynamic Partitions merged into System-as-Root ===",
+            "import /my_bigball/build.prop",
+            "import /my_carrier/build.prop",
+            "import /my_company/build.prop",
+            "import /my_engineering/build.prop",
+            "import /my_heytap/build.prop",
+            "import /my_preload/build.prop",
+            "import /my_product/build.prop",
+            "import /my_region/build.prop",
+            "import /my_stock/build.prop",
             "",
             "# === Xiaomi Mi 8 (dipper) ColorOS 16 Port Properties ===",
             f"ro.product.first_api_level={first_api_level}",
             f"ro.vendor.oplus.market.name={device_market_name}",
+            f"ro.vendor.oplus.market.enname={device_market_name}",
             "ro.oplus.display.screen.heteromorphism=1",
             "ro.SurfaceFlinger.supports_background_blur=1",
             "persist.sys.oplus.anim_level=2",
         ])
         build_prop.write_text("\n".join(filtered) + "\n", encoding="utf-8")
-        log(f"3. Patched system/system/build.prop (first_api_level={first_api_level}, market.name={device_market_name}).")
+        log(f"3. Patched system/system/build.prop (imported my_*/build.prop, first_api_level={first_api_level}, market.name={device_market_name}).")
 
     # [Patch 4] Fix ColorOS 16 Audio crash: Delete my_product/etc/audio_policy_configuration.xml
     audio_pol = sys_root / "my_product" / "etc" / "audio_policy_configuration.xml"
@@ -284,6 +307,89 @@ def step3_apply_coolapk_pt_patches(sys_root: Path, device_market_name: str = "Xi
         if lib_f.exists():
             lib_f.unlink()
             log(f"13. Removed {rel_lib} (YouTube / Hardware Video playback fix).")
+
+    # [Patch 14] Debloat ONLY CN bloatware & pre-generated armv9 oat/ files so merged system.img fits inside Xiaomi Mi 8 sda25 (8.0 GiB)
+    # Keeps all useful daily apps: Calculator, Calendar, Weather, Notes, SoundRecorder, Compass, Music, ThemeStore, PhoneManager, OShare, ScreenRecorder
+    log("14. Removing CN promotional bloatware & armv9 oat/ preopt files to fit inside 8.0 GiB sda25 partition...")
+    debloat_rel_paths = [
+        # CN Shopping, Ads, Quick Games, Browser Video bloat in my_stock/del-app
+        "my_stock/del-app/BrowserVideo",
+        "my_stock/del-app/FamilyGuard",
+        "my_stock/del-app/FinShellWallet",
+        "my_stock/del-app/Gamecenter",
+        "my_stock/del-app/Health",
+        "my_stock/del-app/KeKeUserCenterMember",
+        "my_stock/del-app/OPBreathMode",
+        "my_stock/del-app/OPCommunity",
+        "my_stock/del-app/OplusDocumentsReader",
+        "my_stock/del-app/OplusEmail",
+        "my_stock/del-app/OplusQuickGame",
+        "my_stock/del-app/OPPOStore",
+        "my_stock/del-app/RiderMode",
+        "my_stock/del-app/SoftsimRedteaRoaming",
+        "my_stock/del-app/Tips",
+        "my_stock/del-app/UPTsmService",
+        # Third-party promotional preloads in other del-app folders
+        "my_product/del-app",
+        "my_heytap/del-app",
+        "my_bigball/del-app",
+        "my_region/del-app",
+        "my_preload/del-app",
+        "my_company/del-app",
+        "my_carrier/del-app",
+        # Unused CN Car / Wallet / Manual / Pictorial lockscreen ads in my_stock/app
+        "my_stock/app/BeaconLink",
+        "my_stock/app/Browser",
+        "my_stock/app/CarLink",
+        "my_stock/app/ChildrenSpace",
+        "my_stock/app/DigitalKeyFramework",
+        "my_stock/app/DigitalWellBeing",
+        "my_stock/app/Instant",
+        "my_stock/app/InstantService",
+        "my_stock/app/OplusOperationManual",
+        "my_stock/app/OWork",
+        "my_stock/app/Pictorial",
+        "my_stock/app/RomUpdate",
+        "my_stock/app/SecurePay",
+        "my_stock/app/ShareScreen",
+        "my_stock/app/ViewTalk",
+        "my_stock/app/TasWallet",
+        # Unused CN App Store, Breeno CN voice assistant, Car, Games in my_stock/priv-app
+        "my_stock/priv-app/DCS",
+        "my_stock/priv-app/Cota",
+        "my_stock/priv-app/HeyCast",
+        "my_stock/priv-app/HeyTapSpeechAssist",
+        "my_stock/priv-app/KeKeMarket",
+        "my_stock/priv-app/LinktoWindows",
+        "my_stock/priv-app/MyDevices",
+        "my_stock/priv-app/OplusGames",
+        "my_stock/priv-app/VideoGallery",
+        "my_stock/priv-app/OCar",
+        # Donor-only hardware apps in my_product
+        "my_product/app/AONService",
+        "my_product/app/OplusCamera",
+        "my_product/app/talkback",
+        "my_product/priv-app/RemoteControl",
+        # Unused legacy VNDK v33 apex (dipper LineageOS 22.2 vendor uses v35)
+        "system/system_ext/apex/com.android.vndk.v33.apex",
+    ]
+    removed_dirs = 0
+    for rel_p in debloat_rel_paths:
+        target_p = sys_root / rel_p
+        if target_p.exists():
+            if target_p.is_dir() and not target_p.is_symlink():
+                shutil.rmtree(target_p, ignore_errors=True)
+            else:
+                target_p.unlink()
+            removed_dirs += 1
+
+    # Remove app-level oat/ directories (keeping system/framework/oat for fast boot)
+    oat_removed = 0
+    for oat_dir in list(sys_root.rglob("oat")):
+        if oat_dir.is_dir() and "system/framework" not in oat_dir.as_posix():
+            shutil.rmtree(oat_dir, ignore_errors=True)
+            oat_removed += 1
+    log(f"14. Removed {removed_dirs} CN bloatware targets and {oat_removed} app oat/ folders.")
 
 
 def step4_dipper_kernel49_compatibility(

@@ -94,15 +94,32 @@ if [ -f "${VENDOR_IMG}" ]; then
     resize2fs -M "${VENDOR_IMG}" || true
 fi
 
-echo "[3/5] Building standalone EXT4 system.img for Xiaomi Mi 8 (sda25)..."
+echo "[3/5] Building standalone EXT4 system.img for Xiaomi Mi 8 (sda25 <= 8.0 GiB)..."
 USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
-IMG_MB=$(( USED_MB + 1500 ))
-NUM_INODES=$(( $(find "${SYS_ROOT}" | wc -l) + 25000 ))
+echo "  -> SYS_ROOT size after Python debloat: ${USED_MB} MiB"
+
+# Safety guard: if SYS_ROOT is still > 6800 MiB, trim additional non-essential media/heytap bloat
+if [ "${USED_MB}" -gt 6800 ]; then
+    echo "  -> Trimming extra large bloat apps to ensure strict < 7500 MiB EXT4 image..."
+    rm -rf "${SYS_ROOT}/my_heytap/app"/* "${SYS_ROOT}/my_bigball/app"/* \
+           "${SYS_ROOT}/my_bigball/priv-app"/* "${SYS_ROOT}/my_preload"/* \
+           "${SYS_ROOT}/my_product/media/wallpaper"/* 2>/dev/null || true
+    USED_MB=$(du -sm "${SYS_ROOT}" | cut -f1)
+    echo "  -> SYS_ROOT size after safety trim: ${USED_MB} MiB"
+fi
+
+IMG_MB=$(( USED_MB + (USED_MB * 6 / 100) + 128 ))
+if [ "${IMG_MB}" -gt 7500 ]; then
+    IMG_MB=7500
+fi
+NUM_INODES=$(( $(find "${SYS_ROOT}" | wc -l) + 16384 ))
 SYS_IMG="${BASE_DIR}/system.img"
 rm -f "${SYS_IMG}"
-mke2fs -t ext4 -b 4096 -L "/" -I 256 -N "${NUM_INODES}" -d "${SYS_ROOT}" -O ^metadata_csum,^64bit,^has_journal "${SYS_IMG}" "${IMG_MB}M"
+mke2fs -t ext4 -b 4096 -L "/" -I 256 -m 0 -N "${NUM_INODES}" -d "${SYS_ROOT}" -O ^metadata_csum,^64bit,^has_journal "${SYS_IMG}" "${IMG_MB}M"
 e2fsck -fy "${SYS_IMG}" || true
 resize2fs -M "${SYS_IMG}" || true
+FINAL_SYS_MB=$(du -sm "${SYS_IMG}" | cut -f1)
+echo "  -> Final system.img size: ${FINAL_SYS_MB} MiB (Target sda25 partition: 8192 MiB)"
 rm -rf "${SYS_ROOT}"
 
 echo "[4/5] Building Permissive Kernel 4.9.337 boot.img & TWRP/OrangeFox META-INF installer scripts..."
@@ -190,13 +207,17 @@ ui_print "   ColorOS 16 Standalone Full ROM (CN)        "
 ui_print "   Target Device: Xiaomi Mi 8 (dipper)        "
 ui_print "=============================================="
 
+umount /system_root 2>/dev/null || true
+umount /system 2>/dev/null || true
+umount /vendor 2>/dev/null || true
+
 ui_print "[1/3] Flashing Permissive Kernel (boot.img)..."
 unzip -p "$ZIPFILE" "boot.img" > /dev/block/bootdevice/by-name/boot
 
 ui_print "[2/3] Flashing Patched Dipper Vendor (vendor.img)..."
 unzip -p "$ZIPFILE" "vendor.img" > /dev/block/bootdevice/by-name/vendor
 
-ui_print "[3/3] Flashing Merged ColorOS 16 System (system.img)..."
+ui_print "[3/3] Flashing Merged ColorOS 16 System (sda25 <= 8.0GB)..."
 unzip -p "$ZIPFILE" "system.img" > /dev/block/bootdevice/by-name/system
 e2fsck -fy /dev/block/bootdevice/by-name/system >/dev/null 2>&1 || true
 resize2fs /dev/block/bootdevice/by-name/system >/dev/null 2>&1 || true
@@ -209,6 +230,35 @@ EOF
 chmod 0755 "${PKG_STAGE}/META-INF/com/google/android/update-binary"
 echo "# Dummy updater-script" > "${PKG_STAGE}/META-INF/com/google/android/updater-script"
 
+cat << 'BATEOF' > "${PKG_STAGE}/Flash_Fastboot_Windows.bat"
+@echo off
+title ColorOS 16 - Xiaomi Mi 8 (dipper) Fastboot Installer
+cd /d "%~dp0"
+
+set "FB=fastboot"
+if exist "C:\Users\ManhPhongg\Downloads\platform-tools\fastboot.exe" (
+    set "FB=C:\Users\ManhPhongg\Downloads\platform-tools\fastboot.exe"
+)
+
+echo ========================================================
+echo   ColorOS 16 Standalone ROM - Xiaomi Mi 8 (dipper)
+echo   Che do: Flash truc tiep qua Fastboot (Khong can TWRP)
+echo ========================================================
+echo.
+echo [1/3] Dang flash boot.img...
+"%FB%" flash boot boot.img
+echo [2/3] Dang flash vendor.img...
+"%FB%" flash vendor vendor.img
+echo [3/3] Dang flash system.img vao sda25...
+"%FB%" flash system system.img
+echo.
+echo ========================================================
+echo   FLASH THANH CONG! Neu moi chuyen ROM, hay Format Data
+echo   trong Recovery hoac chay: "%FB%" -w
+echo ========================================================
+pause
+BATEOF
+
 mv "${SYS_IMG}" "${PKG_STAGE}/system.img"
 if [ -f "${VENDOR_IMG}" ]; then
     mv "${VENDOR_IMG}" "${PKG_STAGE}/vendor.img"
@@ -217,9 +267,13 @@ if [ -f "${BASE_DIR}/boot.img" ]; then
     mv "${BASE_DIR}/boot.img" "${PKG_STAGE}/boot.img"
 fi
 
-echo "[5/5] Packaging Full Flashable TWRP ROM: ${OUT_ZIP}..."
+echo "[5/5] Packaging Full Flashable TWRP + Fastboot ROM: ${OUT_ZIP}..."
 rm -f "${OUT_ZIP}"
-(cd "${PKG_STAGE}" && zip -r -1 "${OUT_ZIP}" .)
+if command -v 7z >/dev/null 2>&1; then
+    (cd "${PKG_STAGE}" && 7z a -tzip -mx=5 -mmt=on "${OUT_ZIP}" .)
+else
+    (cd "${PKG_STAGE}" && zip -r -6 "${OUT_ZIP}" .)
+fi
 rm -rf "${PKG_STAGE}"
 
-echo "=== FULL STANDALONE ROM READY: ${OUT_ZIP} ==="
+echo "=== FULL STANDALONE ROM READY: ${OUT_ZIP} ($(du -h "${OUT_ZIP}" | cut -f1)) ==="
