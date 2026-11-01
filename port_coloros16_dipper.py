@@ -253,14 +253,37 @@ def step3_apply_coolapk_pt_patches(sys_root: Path, device_market_name: str = "Xi
                 hdr_deleted += 1
         log(f"11. Removed {hdr_deleted} HDR config files in /my_product/etc (Video feed stutter fix).")
 
-    # [Patch 12] Fix Screen Density (440 dpi for Xiaomi Mi 8 1080x2248 AMOLED) in my_product/build.prop
+    # [Patch 12] Fix Screen Density (440 dpi for Xiaomi Mi 8 1080x2248 AMOLED) + Wake Delay + RAM Expansion
     my_prod_prop = sys_root / "my_product" / "build.prop"
     if my_prod_prop.exists():
         lines = my_prod_prop.read_text(encoding="utf-8", errors="ignore").splitlines()
         lines = [ln for ln in lines if not ln.strip().startswith("ro.sf.lcd_density=")]
-        lines.append("ro.sf.lcd_density=440")
+        lines.extend([
+            "ro.sf.lcd_density=440",
+            "# Fix ColorOS 16 Power Button Wake Delay & Theia Screen Monitor",
+            "persist.sys.oplus.display.wake_delay=0",
+            "persist.sys.oplus.theia_screen_monitor.disabled=1",
+            "ro.surface_flinger.set_display_power_timer_ms=0",
+            "debug.sf.latch_unsignaled=1",
+            "debug.sf.disable_backpressure=1",
+            "debug.sf.enable_gl_backpressure=0",
+            "# Enable ColorOS RAM Expansion",
+            "persist.sys.oplus.nandswap.condition=true",
+        ])
         my_prod_prop.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        log("12. Set ro.sf.lcd_density=440 in my_product/build.prop for Xiaomi Mi 8.")
+        log("12. Set ro.sf.lcd_density=440 + Power Button Wake Delay Fix + RAM Expansion in my_product/build.prop.")
+
+    # [Patch 13] Fix YouTube / Video Playback Crash (remove Oplus stagefright hooks incompatible with SDM845 OMX)
+    for rel_lib in (
+        "system/system_ext/lib64/libavenhancements.so",
+        "system/system_ext/lib/libavenhancements.so",
+        "system/system_ext/lib64/liboplusstagefright.so",
+        "system/system_ext/lib/liboplusstagefright.so",
+    ):
+        lib_f = sys_root / rel_lib
+        if lib_f.exists():
+            lib_f.unlink()
+            log(f"13. Removed {rel_lib} (YouTube / Hardware Video playback fix).")
 
 
 def step4_dipper_kernel49_compatibility(
