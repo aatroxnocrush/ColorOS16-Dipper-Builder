@@ -104,7 +104,73 @@ e2fsck -fy "${SYS_IMG}" || true
 resize2fs -M "${SYS_IMG}" || true
 rm -rf "${SYS_ROOT}"
 
-echo "[4/5] Creating TWRP/OrangeFox META-INF installer scripts..."
+echo "[4/5] Building Permissive Kernel 4.9.337 boot.img & TWRP/OrangeFox META-INF installer scripts..."
+if [ -f "./device_dipper/KernelImage" ] && [ -f "./device_dipper/ramdisk.cpio.gz" ] && [ -f "./device_dipper/dipper_mp_v2_1.dtb" ]; then
+    python3 - << 'PYEOF' "${BASE_DIR}/boot.img"
+import sys, struct, gzip, hashlib
+
+out_boot = sys.argv[1]
+with open("./device_dipper/KernelImage", "rb") as f:
+    raw_img = f.read()
+with open("./device_dipper/dipper_mp_v2_1.dtb", "rb") as f:
+    dtb = f.read()
+with open("./device_dipper/ramdisk.cpio.gz", "rb") as f:
+    ramdisk = f.read()
+
+gz_img = gzip.compress(raw_img, compresslevel=9)
+kernel = gz_img + dtb
+page_size = 4096
+
+def pad_page(data):
+    rem = len(data) % page_size
+    return data if rem == 0 else data + b"\x00" * (page_size - rem)
+
+cmdline = (
+    b"console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xA84000 "
+    b"androidboot.hardware=qcom androidboot.console=ttyMSM0 "
+    b"video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 "
+    b"ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 "
+    b"swiotlb=2048 androidboot.configfs=true loop.max_part=7 "
+    b"androidboot.usbcontroller=a600000.dwc3 androidboot.selinux=permissive"
+)
+
+os_version = (15 << 25) | (25 << 4) | 2
+hdr = bytearray(page_size)
+struct.pack_into(
+    "<8s10I",
+    hdr,
+    0,
+    b"ANDROID!",
+    len(kernel),
+    0x00008000,
+    len(ramdisk),
+    0x01000000,
+    0,
+    0x00F00000,
+    0x00000100,
+    page_size,
+    1,
+    os_version,
+)
+hdr[64 : 64 + len(cmdline)] = cmdline
+
+sha = hashlib.sha1()
+sha.update(kernel)
+sha.update(struct.pack("<I", len(kernel)))
+sha.update(ramdisk)
+sha.update(struct.pack("<I", len(ramdisk)))
+sha.update(struct.pack("<I", 0))
+hdr[576 : 576 + 20] = sha.digest()
+struct.pack_into("<I", hdr, 1632, 1648)
+
+with open(out_boot, "wb") as f:
+    f.write(hdr)
+    f.write(pad_page(kernel))
+    f.write(pad_page(ramdisk))
+print(f"  -> Built permissive Kernel 4.9.337 boot.img: {out_boot} ({len(kernel)}B kernel + {len(ramdisk)}B ramdisk)")
+PYEOF
+fi
+
 PKG_STAGE="$(mktemp -d)"
 mkdir -p "${PKG_STAGE}/META-INF/com/google/android"
 
