@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       coloros16_ota_url:
-        description: "Direct URL to ColorOS 16 Full OTA .zip (any OPlus/OPPO donor: OnePlus 12 / 13 / Ace 3 / Find X7 / X8)"
-        required: true
+        description: "ColorOS 16 OTA URL (Leave 'AUTO_PKX110_C16' to auto-fetch OnePlus 13T PKX110_16.0.10.500 CN01)"
+        required: false
+        default: "AUTO_PKX110_C16"
         type: string
       dipper_base_rom_url:
         description: "Direct URL to Xiaomi Mi 8 (dipper) Base ROM .zip (Leave 'AUTO_LINEAGE' to auto-fetch latest LineageOS 22.2 dipper)"
@@ -81,7 +82,17 @@ jobs:
 
       - name: Download ColorOS 16 Donor Full OTA
         run: |
-          aria2c -x16 -s16 -k1M --user-agent="Dalvik/2.1.0 (Linux; U; Android 16; Build/AP3A.240617.008)" -o coloros16_ota.zip "${{ inputs.coloros16_ota_url }}"
+          OTA_URL="${{ inputs.coloros16_ota_url }}"
+          if [ "${OTA_URL}" = "AUTO_PKX110_C16" ] || [ -z "${OTA_URL}" ]; then
+            echo "Auto-resolving fresh signed CDN URL for OnePlus 13T ColorOS 16 (PKX110_16.0.10.500 CN01)..."
+            CHECK_URL=$(curl -s "https://roms.danielspringer.at/api/ota.php?model=PKX110" | jq -r '.releases[] | select(.version | contains("16.0")) | .source_url' | tail -n1)
+            echo "Resolved downloadCheck URL: ${CHECK_URL}"
+            OTA_URL=$(curl -s -D - -o /dev/null -H "userId: oplus-ota|16002018" "${CHECK_URL}" | grep -i '^location:' | awk '{print $2}' | tr -d '\r')
+            echo "Resolved signed CDN URL: ${OTA_URL}"
+          elif echo "${OTA_URL}" | grep -q "downloadCheck"; then
+            OTA_URL=$(curl -s -D - -o /dev/null -H "userId: oplus-ota|16002018" "${OTA_URL}" | grep -i '^location:' | awk '{print $2}' | tr -d '\r')
+          fi
+          aria2c -x16 -s16 -k1M --user-agent="Dalvik/2.1.0 (Linux; U; Android 16; Build/AP3A.240617.008)" -o coloros16_ota.zip "${OTA_URL}"
 
       - name: Run ColorOS 16 -> Dipper Porting Engine (Clean Standalone)
         run: |

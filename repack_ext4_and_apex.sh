@@ -63,6 +63,7 @@ VENDOR_IMG="${BASE_DIR}/vendor.img"
 if [ -f "${VENDOR_IMG}" ]; then
     e2fsck -fy "${VENDOR_IMG}" || true
     resize2fs "${VENDOR_IMG}" 1536M || true
+    e2fsck -E unshare_blocks -fy "${VENDOR_IMG}" || true
     MNT_V="$(mktemp -d)"
     mount -o loop,rw "${VENDOR_IMG}" "${MNT_V}"
     for b in group passwd oplus_avb.pubkey; do
@@ -76,7 +77,15 @@ if [ -f "${VENDOR_IMG}" ]; then
             echo "  -> Injected donor odm/etc/${b} into dipper vendor.img"
         fi
     done
-    # Ensurefstab/overlay directories exist for ColorOS
+    # Inject ColorOS 16 Power Button Wake Delay Fix into vendor if present
+    if [ -d "./device_dipper/power_delay_fix" ]; then
+        cp -rf ./device_dipper/power_delay_fix/bin/* "${MNT_V}/bin/" 2>/dev/null || true
+        cp -rf ./device_dipper/power_delay_fix/etc/init/* "${MNT_V}/etc/init/" 2>/dev/null || true
+        chmod 0755 "${MNT_V}/bin/init.button.sh" "${MNT_V}/bin/resetprop" 2>/dev/null || true
+        chmod 0644 "${MNT_V}/etc/init/init.button.rc" 2>/dev/null || true
+        echo "  -> Injected ColorOS 16 Power Button Wake Delay Fix into dipper vendor.img"
+    fi
+    # Ensure fstab/overlay directories exist for ColorOS
     mkdir -p "${MNT_V}/odm"
     sync
     umount "${MNT_V}"
