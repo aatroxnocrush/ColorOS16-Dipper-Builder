@@ -290,16 +290,13 @@ def step4_dipper_kernel49_compatibility(
     sys_root: Path,
     fsck_erofs_bin: str,
     make_ext4fs_or_mke2fs_bin: str,
-    dipper_fix_zip: Path = None,
     c15_donor_dir: Path = None
 ):
     """
-    Solves the two fatal Xiaomi Mi 8 (Kernel 4.9.337) blockers when booting ColorOS 16:
+    Solves the Xiaomi Mi 8 (Kernel 4.9.337) blockers when booting ColorOS 16:
     1. ColorOS 16 packs /system/apex/*.apex with EROFS apex_payload.img, which fails on
-       dipper's Kernel 4.9.337 (no CONFIG_EROFS_FS). If a ColorOS 15 / Android 15 EXT4
-       apex directory is supplied (or if we repack apex_payload.img to EXT4), apexd mounts cleanly.
-    2. Injects dipper-specific NFC (NQ330), Dual-Mic Audio, and Wi-Fi fixes from
-       Mi8_ColorOS15_NFC_WiFi_AllInOne_Fix_v2.0.zip.
+       dipper's Kernel 4.9.337 (no CONFIG_EROFS_FS). Repacked to EXT4 by repack_ext4_and_apex.sh.
+    2. Injects ColorOS 16 Wi-Fi Soft-Reboot BPF fix (oplus-netd.o & ipv6_offload.o).
     """
     log("Applying Xiaomi Mi 8 (Kernel 4.9.337) APEX & BPF compatibility layer...")
 
@@ -334,20 +331,6 @@ def step4_dipper_kernel49_compatibility(
                     shutil.copy2(src, dst)
                 log(f"Transplanted {rel_path} from working dipper ColorOS 15 base.")
 
-    # Integrate Mi8_ColorOS15_NFC_WiFi_AllInOne_Fix_v2.0.zip into /system if available
-    if dipper_fix_zip and dipper_fix_zip.exists():
-        log(f"Integrating Xiaomi Mi 8 hardware fix package: {dipper_fix_zip.name}")
-        tmp_fix = sys_root.parent / "tmp_dipper_fix"
-        tmp_fix.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(dipper_fix_zip, "r") as zf:
-            zf.extractall(tmp_fix)
-        # Copy system/* overlays from the module into sys_root/system/
-        mod_sys = tmp_fix / "system"
-        if mod_sys.exists():
-            shutil.copytree(mod_sys, sys_root / "system", symlinks=True, dirs_exist_ok=True)
-            log("Merged Mi 8 NFC/Audio/WiFi system files into ROM.")
-        shutil.rmtree(tmp_fix, ignore_errors=True)
-
 
 def main():
     parser = argparse.ArgumentParser(description="ColorOS 16 -> Xiaomi Mi 8 (dipper) Automated Builder")
@@ -370,7 +353,6 @@ def main():
         sys_root,
         args.fsck_erofs,
         "",
-        None,
         Path(args.c15_base_dir).resolve() if args.c15_base_dir else None,
     )
     log("=== ALL PATCHES COMPLETED SUCCESSFULLY! ===")
